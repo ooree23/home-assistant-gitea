@@ -1,4 +1,5 @@
 """Platform for sensor integration."""
+from datetime import timedelta
 import logging
 import json
 import requests
@@ -6,6 +7,7 @@ import voluptuous as vol
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity import Entity
 from homeassistant.components.switch import PLATFORM_SCHEMA
+from homeassistant.helpers.event import track_time_interval
 from homeassistant.const import (
     CONF_TOKEN,
     CONF_PORT,
@@ -19,6 +21,9 @@ _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_NAME = "gitea"
 CONF_REPOS = "repositories"
+# Will update every 15 min the user repos list
+SCAN_INTERVAL_DISCOVERY = timedelta(minutes=15)
+
 ATTR_REPO_NAME = "Repository"
 ATTR_REPO_ID = "ID"
 ATTR_DESCRIPTION = "Description"
@@ -65,39 +70,54 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
     port = config.get(CONF_PORT)
     explicit_repos = config.get(CONF_REPOS)
 
-    entities = []
+    known_repos = set()
 
-    try:
-        # If user explicitly lists repos in configuration.yaml
-        if explicit_repos:
-            for repo in explicit_repos:
-                entities.append(
-                    GiteaSensor(token, proto, host, port, repo[CONF_PATH])
-                )
+    def discover_repos(now=None):
+        """Add new repos"""
+        entities = []
+        try:
+            # If user explicitly lists repos in configuration.yaml
+            if explicit_repos:
+                for repo in explicit_repos:
+                    repo_path = repo[CONF_PATH]
+                    if repo_path not in known_repos:
+                        known_repos.add(repo_path)
+                        entities.append(
+                            GiteaSensor(token, proto, host, port, repo_path)
+                        )
 
-        # No list writtent : dynamic list from Gitea API
-        # https://docs.gitea.com/api/1.27/#tag/repository/operation/repoSearch
-        else:
-            url = f"{proto}://{host}:{port}/api/v1/user/repos"
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {token}",
-            }
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            
-            repos_data = response.json()
-            for repo_info in repos_data:
-                repo_path = repo_info.get("full_name")
-                if repo_path:
-                    entities.append(
-                        GiteaSensor(token, proto, host, port, repo_path)
-                    )
+            # No list writtent : dynamic list from Gitea API
+            # https://docs.gitea.com/api/1.27/#tag/repository/operation/repoSearch
+            else:
+                url = f"{proto}://{host}:{port}/api/v1/user/repos"
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {token}",
+                }
+                response = requests.get(url, headers=headers, timeout=10)
+                response.raise_for_status()
 
-        add_entities(entities, True)
+                repos_data = response.json()
+                for repo_info in repos_data:
+                    repo_path = repo_info.get("full_name")
+                    if repo_path and repo_path not in known_repos:
+                        known_repos.add(repo_path)
+                        entities.append(
+                            GiteaSensor(token, proto, host, port, repo_path)
+                        )
 
-    except Exception as err:
-        _LOGGER.error("Erreur lors de la configuration de l'intégration Gitea: %s", err)
+            if entities:
+                add_entities(entities, True)
+
+        except Exception as err:
+            _LOGGER.error("Erreur lors de la configuration de l'intégration Gitea: %s", err)
+
+    # Discover all repos on start (static or dynamlic)
+    discover_repos()
+
+    # Only if dynamic mode, we schedule discovering every 15 min
+    if not explicit_repos:
+        track_time_interval(hass, discover_repos, SCAN_INTERVAL_DISCOVERY)
 
 
 class GiteaSensor(Entity):
