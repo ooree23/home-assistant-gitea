@@ -172,7 +172,9 @@ class GiteaSensor(Entity):
         self.open_issues_count = infos["description"]
         self.open_issues_count = infos["open_issues_count"]
         self.default_branch = infos["default_branch"]
-        self.size = str(infos["size"]) + " Mo"
+        # https://docs.gitea.com/api/1.27/#tag/repository/operation/repoSearch
+        # seems like the "size" attribute is in Ko, not Mo.
+        self.size = f"{infos['size']} Ko"
         self.owner_name = infos["owner"]["login"]
         self.private = infos["private"]
         self.mirror = infos["mirror"]
