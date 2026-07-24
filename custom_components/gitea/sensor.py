@@ -52,25 +52,52 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Required(CONF_PORT): cv.string,
         vol.Required(CONF_HOST): cv.string,
         vol.Required(CONF_PROTOCOL): cv.string,
-        vol.Required(CONF_REPOS): vol.All(cv.ensure_list, [REPO_SCHEMA]),
+        vol.Optional(CONF_REPOS): vol.All(cv.ensure_list, [REPO_SCHEMA]),
     }
 )
 
 
 def setup_platform(hass, config, add_entities, discovery_info=None):
-    """Setup Platform."""
-    for repo in config[CONF_REPOS]:
-        add_entities(
-            [
-                GiteaSensor(
-                    config.get(CONF_TOKEN),
-                    config.get(CONF_PROTOCOL),
-                    config.get(CONF_HOST),
-                    config.get(CONF_PORT),
-                    repo,
+    """Setup Platform dynamically or statically."""
+    token = config.get(CONF_TOKEN)
+    proto = config.get(CONF_PROTOCOL)
+    host = config.get(CONF_HOST)
+    port = config.get(CONF_PORT)
+    explicit_repos = config.get(CONF_REPOS)
+
+    entities = []
+
+    try:
+        # If user explicitly lists repos in configuration.yaml
+        if explicit_repos:
+            for repo in explicit_repos:
+                entities.append(
+                    GiteaSensor(token, proto, host, port, repo[CONF_PATH])
                 )
-            ]
-        )
+
+        # No list writtent : dynamic list from Gitea API
+        # https://docs.gitea.com/api/1.27/#tag/repository/operation/repoSearch
+        else:
+            url = f"{proto}://{host}:{port}/api/v1/user/repos"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}",
+            }
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            repos_data = response.json()
+            for repo_info in repos_data:
+                repo_path = repo_info.get("full_name")
+                if repo_path:
+                    entities.append(
+                        GiteaSensor(token, proto, host, port, repo_path)
+                    )
+
+        add_entities(entities, True)
+
+    except Exception as err:
+        _LOGGER.error("Erreur lors de la configuration de l'intégration Gitea: %s", err)
 
 
 class GiteaSensor(Entity):
@@ -105,7 +132,7 @@ class GiteaSensor(Entity):
         self.proto = proto
         self.api_url = api_url
         self.api_port = api_port
-        self.repo = repo[CONF_PATH]
+        self.repo = repo
         self.id_repo = id
         self.description = description
         self.open_issues_count = open_issues_count
@@ -127,7 +154,9 @@ class GiteaSensor(Entity):
     @property
     def name(self):
         """Return the name of the sensor."""
-        return DEFAULT_NAME + "_" + self.repo.split("/")[1]
+        repo_parts = self.repo.split("/")
+        repo_name = repo_parts[1] if len(repo_parts) > 1 else self.repo
+        return f"{DEFAULT_NAME}_{repo_name}"
 
     @property
     def state(self):
@@ -169,7 +198,6 @@ class GiteaSensor(Entity):
         infos = self.api_call(self.generate_url())
         self.id_repo = infos["id"]
         self.description = infos["description"]
-        self.open_issues_count = infos["description"]
         self.open_issues_count = infos["open_issues_count"]
         self.default_branch = infos["default_branch"]
         # https://docs.gitea.com/api/1.27/#tag/repository/operation/repoSearch
