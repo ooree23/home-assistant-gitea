@@ -110,8 +110,16 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
                 add_entities(entities, True)
 
         except Exception as err:
-            _LOGGER.error("Erreur lors de la configuration de l'intégration Gitea: %s", err)
+            _LOGGER.error("Error when configuring Gitea integration: %s", err)
 
+
+    # Define service to refresh repos list on demand on HA
+    def handle_reload_service(call):
+        _LOGGER.info("Manually refresh Gitea repos")
+        discover_repos()
+    # Register service
+    hass.services.register("gitea", "reload_repos", handle_reload_service)
+    
     # Discover all repos on start (static or dynamlic)
     discover_repos()
 
