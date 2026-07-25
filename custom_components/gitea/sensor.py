@@ -6,7 +6,9 @@ import requests
 import voluptuous as vol
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity import Entity
-from homeassistant.components.switch import PLATFORM_SCHEMA
+from homeassistant.components.sensor import SensorEntity
+from homeassistant.const import EntityCategory
+from homeassistant.components.sensor import PLATFORM_SCHEMA
 from homeassistant.helpers.event import track_time_interval
 from homeassistant.const import (
     CONF_TOKEN,
@@ -64,6 +66,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
 
 def setup_platform(hass, config, add_entities, discovery_info=None):
     """Setup Platform dynamically or statically."""
+    _LOGGER.info("Setuping platform Gitea...")
     token = config.get(CONF_TOKEN)
     proto = config.get(CONF_PROTOCOL)
     host = config.get(CONF_HOST)
@@ -71,10 +74,22 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
     explicit_repos = config.get(CONF_REPOS)
 
     known_repos = set()
+    system_sensors_added = False
 
     def discover_repos(now=None):
-        """Add new repos"""
+        """system diagnostic sensors."""
+        nonlocal system_sensors_added
         entities = []
+
+        # Instanciation unique des capteurs de diagnostic lors du premier passage
+        _LOGGER.info("Creating diagnostic user and version entites...")
+        if not system_sensors_added:
+            entities.append(GiteaUserSensor(token, proto, host, port))
+            entities.append(GiteaVersionSensor(token, proto, host, port))
+            system_sensors_added = True
+        
+        """Add new repos"""
+        _LOGGER.info("Creating one entity by repo...")
         try:
             # If user explicitly lists repos in configuration.yaml
             if explicit_repos:
@@ -111,15 +126,18 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
 
         except Exception as err:
             _LOGGER.error("Error when configuring Gitea integration: %s", err)
-
-
+            
+            
+    _LOGGER.info("Creating manual service...")
     # Define service to refresh repos list on demand on HA
-    def handle_reload_service(call):
+    def handle_reload_service(call=None):
         _LOGGER.info("Manually refresh Gitea repos")
         discover_repos()
+
     # Register service
     hass.services.register("gitea", "reload_repos", handle_reload_service)
     
+    _LOGGER.info("First discover of repos...")
     # Discover all repos on start (static or dynamlic)
     discover_repos()
 
@@ -184,7 +202,7 @@ class GiteaSensor(Entity):
         """Return the name of the sensor."""
         repo_parts = self.repo.split("/")
         repo_name = repo_parts[1] if len(repo_parts) > 1 else self.repo
-        return f"{DEFAULT_NAME}_{repo_name}"
+        return f"{DEFAULT_NAME}_repo_{repo_name}"
 
     @property
     def state(self):
@@ -280,3 +298,101 @@ class GiteaSensor(Entity):
     def api_call(self, url):
         """Return result of api request."""
         return requests.request(method="GET", url=url, headers=self.get_header()).json()
+
+
+
+
+class GiteaUserSensor(SensorEntity):
+    """Diagnostic sensor for current Gitea user details."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:account-cog"
+
+    def __init__(self, token, proto, host, port):
+        self.token = token
+        self.proto = proto
+        self.host = host
+        self.port = port
+        self._state = None
+        self._attributes = {}
+
+    @property
+    def name(self):
+        """Return sensor name."""
+        return f"{DEFAULT_NAME}_user"
+
+    @property
+    def native_value(self):
+        """Return current user name / login."""
+        return self._state
+
+    @property
+    def extra_state_attributes(self):
+        """Return user metadata (email, avatar_url, admin status, etc.)."""
+        return self._attributes
+
+    def update(self):
+        """Fetch current authenticated user profile."""
+        url = f"{self.proto}://{self.host}:{self.port}/api/v1/user"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.token}",
+        }
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            user_info = response.json()
+
+            # La valeur principale correspond au nom d'affichage (ou login)
+            self._state = user_info.get("full_name") or user_info.get("login")
+
+            # Informations enrichies en attributs (dont l'URL de l'avatar)
+            self._attributes = {
+                "username": user_info.get("login"),
+                "email": user_info.get("email"),
+                "avatar_url": user_info.get("avatar_url"),
+                "id": user_info.get("id"),
+                "is_admin": user_info.get("is_admin"),
+                "created_at": user_info.get("created"),
+            }
+        except Exception as err:
+            _LOGGER.error("Error fetching Gitea user info: %s", err)
+
+
+class GiteaVersionSensor(SensorEntity):
+    """Diagnostic sensor for Gitea server version."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:git"
+
+    def __init__(self, token, proto, host, port):
+        self.token = token
+        self.proto = proto
+        self.host = host
+        self.port = port
+        self._state = None
+
+    @property
+    def name(self):
+        """Return sensor name."""
+        return f"{DEFAULT_NAME}_version"
+
+    @property
+    def native_value(self):
+        """Return Gitea instance version."""
+        return self._state
+
+    def update(self):
+        """Fetch server version."""
+        url = f"{self.proto}://{self.host}:{self.port}/api/v1/version"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.token}",
+        }
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            self._state = data.get("version")
+        except Exception as err:
+            _LOGGER.error("Error fetching Gitea version: %s", err)
