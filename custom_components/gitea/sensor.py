@@ -84,8 +84,11 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
         # Instanciation unique des capteurs de diagnostic lors du premier passage
         _LOGGER.info("Creating diagnostic user and version entites...")
         if not system_sensors_added:
-            entities.append(GiteaUserSensor(token, proto, host, port))
-            entities.append(GiteaVersionSensor(token, proto, host, port))
+            system_sensors = [
+                GiteaUserSensor(token, proto, host, port),
+                GiteaVersionSensor(token, proto, host, port)
+            ]
+            add_entities(system_sensors, False)
             system_sensors_added = True
         
         """Add new repos"""
