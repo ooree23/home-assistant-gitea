@@ -44,6 +44,7 @@ ATTR_LAST_ISSUE_LINK = "Last Issue Link"
 ATTR_LAST_ISSUE_STATE = "Last Issue Status"
 ATTR_LAST_ISSUE_TITLE = "Last Issue Title"
 ATTR_ALL_ISSUES = "All Issues"
+ATTR_AVATAR_URL = "Avatar Url"
 
 
 URL_ISSUE = "/issues?state=all"
@@ -175,6 +176,7 @@ class GiteaSensor(Entity):
         issue_link=None,
         issue_state=None,
         all_issues=None,
+        avatar_url=None,
     ):
         self._state = None
         self.token = token
@@ -199,6 +201,7 @@ class GiteaSensor(Entity):
         self.issue_link = issue_link
         self.issue_state = issue_state
         self.all_issues = all_issues
+        self.avatar_url = avatar_url
 
     @property
     def name(self):
@@ -239,6 +242,7 @@ class GiteaSensor(Entity):
             ATTR_LAST_ISSUE_STATE: self.issue_state,
             ATTR_LAST_ISSUE_TITLE: self.issue_title,
             ATTR_ALL_ISSUES: self.all_issues,
+            ATTR_AVATAR_URL: self.avatar_url,
         }
         return attrs
 
@@ -261,6 +265,7 @@ class GiteaSensor(Entity):
         self._state = infos["default_branch"]
         self.watcher = infos["watchers_count"]
         self.updated_at = infos["updated_at"]
+        self.avatar_url = infos["avatar_url"]
 
         if infos["open_issues_count"] != 0:
             issues_tab = []
