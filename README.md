@@ -17,7 +17,7 @@ Home Assistant component to feed Home Assistant component to feed all your repos
 | host |  | yes | The host which Gitea is running on.
 | protocol |  | yes | The HTTP protocol used by Gitea.
 | port |  | yes | The port which Gitea is running on.
-| repositories |  | yes | A List of your repositores you want to track that contain repository path.
+| repositories |  | no | A List of your repositores if you want to track only some repository paths.
 
 ## Exemples
 
@@ -29,8 +29,6 @@ Home Assistant component to feed Home Assistant component to feed all your repos
         host: localhost
         protocol: http
         port: 80
-        repositories:
-          - path: 'user/crazy_repo'
 ```
 ### Example for ui-lovelace.yaml:
 ```yaml
@@ -41,6 +39,17 @@ Home Assistant component to feed Home Assistant component to feed all your repos
        filter:
          include:
            - key: sensor.gitea_crazy_repo.*
+```
+### Example tracking one repo:
+```yaml
+    sensor:
+      - platform: gitea
+        token: YOUR_GITEA_TOKEN
+        host: localhost
+        protocol: http
+        port: 80
+        repositories:
+          - path: 'user/crazy_repo'
 ```
 ### Multiple repositories for configuration.yaml:
 ```yaml
