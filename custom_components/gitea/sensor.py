@@ -218,7 +218,15 @@ class GiteaSensor(Entity):
     @property
     def icon(self):
         """Return the icon to use in the frontend."""
-        return "mdi:tea"
+        if self.mirror==True:
+            return "mdi:format-horizontal-align-center"
+        else:
+            return "mdi:tea"
+        
+    @property
+    def entity_picture(self) -> str | None:
+        """Retourne l'URL de l'image de l'entité."""
+        return self.avatar_url
 
     @property
     def extra_state_attributes(self):
@@ -338,6 +346,11 @@ class GiteaUserSensor(SensorEntity):
     def extra_state_attributes(self):
         """Return user metadata (email, avatar_url, admin status, etc.)."""
         return self._attributes
+        
+    @property
+    def entity_picture(self) -> str | None:
+        """Retourne l'URL de l'image de l'entité."""
+        return self._attributes.get("avatar_url")
 
     def update(self):
         """Fetch current authenticated user profile."""
