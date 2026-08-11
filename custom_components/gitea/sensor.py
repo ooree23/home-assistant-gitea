@@ -5,7 +5,7 @@ import json
 import requests
 import voluptuous as vol
 import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.entity import DeviceInfo, Entity
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.const import EntityCategory
 from homeassistant.components.sensor import PLATFORM_SCHEMA
@@ -66,9 +66,9 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
 )
 
 
-def setup_platform(hass, config, add_entities, discovery_info=None):
-    """Setup Platform dynamically or statically."""
-    _LOGGER.info("Setuping platform Gitea...")
+async def async_setup_entry(hass, config_entry, async_add_entities):
+    """Configuration des capteurs via ConfigEntry UI."""
+    config = config_entry.data
     token = config.get(CONF_TOKEN)
     proto = config.get(CONF_PROTOCOL)
     host = config.get(CONF_HOST)
@@ -320,6 +320,29 @@ class GiteaSensor(Entity):
         """Return result of api request."""
         return requests.request(method="GET", url=url, headers=self.get_header()).json()
 
+    @property
+    def unique_id(self):
+        """Retourne un identifiant unique pour l'entité."""
+        # Utilise l'ID du dépôt s'il est disponible, sinon un hash du chemin du dépôt
+        if self.id_repo:
+            return f"gitea_repo_{self.id_repo}"
+        return f"gitea_repo_{self.repo.replace('/', '_')}"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Retourne les informations de l'appareil associé au projet."""
+        repo_parts = self.repo.split("/")
+        repo_name = repo_parts[1] if len(repo_parts) > 1 else self.repo
+
+        return DeviceInfo(
+            # Identifiants uniques de l'appareil (ex: gitea_repo_12345 ou nom du repo)
+            identifiers={("gitea", f"repo_{self.id_repo or self.repo}")},
+            name=f"{repo_name}",
+            manufacturer="Gitea",
+            model="Git Repository",
+            # Lien Web vers le dépôt Git affiché sur la fiche de l'appareil
+            configuration_url=self.url,
+        )
 
 
 
@@ -385,6 +408,20 @@ class GiteaUserSensor(SensorEntity):
             _LOGGER.error("Error fetching Gitea user info: %s", err)
 
 
+    @property
+    def unique_id(self):
+        return f"gitea_instance_{self.host}_{self.port}_user"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={("gitea", f"instance_{self.host}_{self.port}")},
+            name=f"Gitea ({self.host})",
+            manufacturer="Gitea",
+            configuration_url=f"{self.proto}://{self.host}:{self.port}",
+        )
+
+
 class GiteaVersionSensor(SensorEntity):
     """Diagnostic sensor for Gitea server version."""
 
@@ -422,3 +459,16 @@ class GiteaVersionSensor(SensorEntity):
             self._state = data.get("version")
         except Exception as err:
             _LOGGER.error("Error fetching Gitea version: %s", err)
+
+    @property
+    def unique_id(self):
+        return f"gitea_instance_{self.host}_{self.port}_version"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={("gitea", f"instance_{self.host}_{self.port}")},
+            name=f"Gitea ({self.host})",
+            manufacturer="Gitea",
+            configuration_url=f"{self.proto}://{self.host}:{self.port}",
+        )
