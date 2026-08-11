@@ -191,7 +191,7 @@ class GiteaSensor(Entity):
 
         return DeviceInfo(
             identifiers={("gitea", f"repo_{self.id_repo or self.repo}")},
-            name=f"{repo_name}",
+            name=f"Dépôt Git - {repo_name}",
             manufacturer="Gitea",
             model="Git Repository",
             configuration_url=self.url,
