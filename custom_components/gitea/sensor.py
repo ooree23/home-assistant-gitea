@@ -106,9 +106,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             async_add_entities(entities, True)
 
     _LOGGER.info("Creating manual service...")
-    hass.services.async_register(
-        "gitea", "reload_repos", lambda call: hass.async_create_task(discover_repos())
-    )
+    async def handle_reload(call):
+        await discover_repos()
+    hass.services.async_register("gitea", "reload_repos", handle_reload)
 
     _LOGGER.info("First discovery of repos...")
     await discover_repos()
