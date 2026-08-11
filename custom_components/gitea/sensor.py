@@ -90,9 +90,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                 GiteaUserSensor(token, proto, host, port),
                 GiteaVersionSensor(token, proto, host, port)
             ]
-            add_entities(system_sensors, False)
+            async_add_entities(system_sensors, True)
             system_sensors_added = True
-        
+
         """Add new repos"""
         _LOGGER.info("Creating one entity by repo...")
         try:
@@ -106,8 +106,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                             GiteaSensor(token, proto, host, port, repo_path)
                         )
 
-            # No list writtent : dynamic list from Gitea API
-            # https://docs.gitea.com/api/1.27/#tag/repository/operation/repoSearch
+            # No list written : dynamic list from Gitea API
             else:
                 url = f"{proto}://{host}:{port}/api/v1/user/repos"
                 headers = {
@@ -127,26 +126,26 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                         )
 
             if entities:
-                add_entities(entities, True)
+                async_add_entities(entities, True)
 
         except Exception as err:
             _LOGGER.error("Error when configuring Gitea integration: %s", err)
-            
-            
+
+
     _LOGGER.info("Creating manual service...")
-    # Define service to refresh repos list on demand on HA
+    # Define service to refresh repos list on demand on HA (version asynchrone)
     def handle_reload_service(call=None):
         _LOGGER.info("Manually refresh Gitea repos")
         discover_repos()
 
-    # Register service
-    hass.services.register("gitea", "reload_repos", handle_reload_service)
-    
-    _LOGGER.info("First discover of repos...")
-    # Discover all repos on start (static or dynamlic)
-    discover_repos()
+    # Enregistrement asynchrone du service
+    hass.services.async_register("gitea", "reload_repos", handle_reload_service)
 
-    # Only if dynamic mode, we schedule discovering every 15 min
+    _LOGGER.info("First discover of repos...")
+    # Première exécution de la découverte dans l'executor pour ne pas bloquer l'Event Loop
+    await hass.async_add_executor_job(discover_repos)
+
+    # Programation de la découverte dynamique toutes les 15 minutes
     if not explicit_repos:
         track_time_interval(hass, discover_repos, SCAN_INTERVAL_DISCOVERY)
 
@@ -155,36 +154,36 @@ class GiteaSensor(Entity):
     """Representation of a Sensor."""
 
     def __init__(
-        self,
-        token=None,
-        proto=None,
-        api_url=None,
-        api_port=None,
-        repo=None,
-        id=None,
-        description=None,
-        open_issues_count=None,
-        default_branch=None,
-        size=None,
-        owner_name=None,
-        private=None,
-        stars=None,
-        fork=None,
-        mirror=None,
-        url=None,
-        updated_at=None,
-        issue_title=None,
-        issue_link=None,
-        issue_state=None,
-        all_issues=None,
-        avatar_url=None,
-        language=None,
+            self,
+            token=None,
+            proto=None,
+            host=None,
+            port=None,
+            repo=None,
+            id=None,
+            description=None,
+            open_issues_count=None,
+            default_branch=None,
+            size=None,
+            owner_name=None,
+            private=None,
+            stars=None,
+            fork=None,
+            mirror=None,
+            url=None,
+            updated_at=None,
+            issue_title=None,
+            issue_link=None,
+            issue_state=None,
+            all_issues=None,
+            avatar_url=None,
+            language=None,
     ):
         self._state = None
         self.token = token
         self.proto = proto
-        self.api_url = api_url
-        self.api_port = api_port
+        self.api_url = host
+        self.api_port = port
         self.repo = repo
         self.id_repo = id
         self.description = description
@@ -221,11 +220,10 @@ class GiteaSensor(Entity):
     @property
     def icon(self):
         """Return the icon to use in the frontend."""
-        if self.mirror==True:
+        if self.mirror is True:
             return "mdi:format-horizontal-align-center"
-        else:
-            return "mdi:tea"
-        
+        return "mdi:tea"
+
     @property
     def entity_picture(self) -> str | None:
         """Retourne l'URL de l'image de l'entité."""
@@ -265,8 +263,6 @@ class GiteaSensor(Entity):
         self.description = infos["description"]
         self.open_issues_count = infos["open_issues_count"]
         self.default_branch = infos["default_branch"]
-        # https://docs.gitea.com/api/1.27/#tag/repository/operation/repoSearch
-        # seems like the "size" attribute is in Ko, not Mo.
         self.size = f"{infos['size']} Ko"
         self.owner_name = infos["owner"]["login"]
         self.private = infos["private"]
@@ -323,7 +319,6 @@ class GiteaSensor(Entity):
     @property
     def unique_id(self):
         """Retourne un identifiant unique pour l'entité."""
-        # Utilise l'ID du dépôt s'il est disponible, sinon un hash du chemin du dépôt
         if self.id_repo:
             return f"gitea_repo_{self.id_repo}"
         return f"gitea_repo_{self.repo.replace('/', '_')}"
@@ -335,15 +330,12 @@ class GiteaSensor(Entity):
         repo_name = repo_parts[1] if len(repo_parts) > 1 else self.repo
 
         return DeviceInfo(
-            # Identifiants uniques de l'appareil (ex: gitea_repo_12345 ou nom du repo)
             identifiers={("gitea", f"repo_{self.id_repo or self.repo}")},
             name=f"{repo_name}",
             manufacturer="Gitea",
             model="Git Repository",
-            # Lien Web vers le dépôt Git affiché sur la fiche de l'appareil
             configuration_url=self.url,
         )
-
 
 
 class GiteaUserSensor(SensorEntity):
@@ -374,7 +366,7 @@ class GiteaUserSensor(SensorEntity):
     def extra_state_attributes(self):
         """Return user metadata (email, avatar_url, admin status, etc.)."""
         return self._attributes
-        
+
     @property
     def entity_picture(self) -> str | None:
         """Retourne l'URL de l'image de l'entité."""
@@ -392,10 +384,8 @@ class GiteaUserSensor(SensorEntity):
             response.raise_for_status()
             user_info = response.json()
 
-            # La valeur principale correspond au nom d'affichage (ou login)
             self._state = user_info.get("full_name") or user_info.get("login")
 
-            # Informations enrichies en attributs (dont l'URL de l'avatar)
             self._attributes = {
                 "username": user_info.get("login"),
                 "email": user_info.get("email"),
@@ -406,7 +396,6 @@ class GiteaUserSensor(SensorEntity):
             }
         except Exception as err:
             _LOGGER.error("Error fetching Gitea user info: %s", err)
-
 
     @property
     def unique_id(self):
