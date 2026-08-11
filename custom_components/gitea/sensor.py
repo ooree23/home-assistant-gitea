@@ -9,7 +9,7 @@ from homeassistant.helpers.entity import DeviceInfo, Entity
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.const import EntityCategory
 from homeassistant.components.sensor import PLATFORM_SCHEMA
-from homeassistant.helpers.event import track_time_interval
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.const import (
     CONF_TOKEN,
     CONF_PORT,
@@ -114,7 +114,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     await discover_repos()
 
     # Planification dynamique de la recherche
-    track_time_interval(
+    async_track_time_interval(
         hass,
         lambda now: hass.async_create_task(discover_repos(now)),
         SCAN_INTERVAL_DISCOVERY,
