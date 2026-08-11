@@ -283,7 +283,6 @@ class GiteaUserSensor(SensorEntity):
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:account-cog"
-    _attr_friendly_name = "User"
 
     def __init__(self, token, proto, host, port):
         self.token = token
@@ -295,7 +294,7 @@ class GiteaUserSensor(SensorEntity):
 
     @property
     def name(self):
-        return f"{DEFAULT_NAME}_user"
+        return f"Gitea User"
 
     @property
     def native_value(self):
@@ -351,7 +350,6 @@ class GiteaVersionSensor(SensorEntity):
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:git"
-    _attr_friendly_name = "Gitea Version"
 
     def __init__(self, token, proto, host, port):
         self.token = token
@@ -362,7 +360,7 @@ class GiteaVersionSensor(SensorEntity):
 
     @property
     def name(self):
-        return f"{DEFAULT_NAME}_version"
+        return f"Gitea Version"
 
     @property
     def native_value(self):
