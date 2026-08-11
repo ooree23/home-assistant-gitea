@@ -269,7 +269,13 @@ class GiteaSensor(Entity):
         }
 
     def api_call(self, url):
-        return requests.get(url, headers=self.get_header(), timeout=10).json()
+        try:
+            response = requests.get(url, headers=self.get_header(), timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except Exception as err:
+            _LOGGER.error("Erreur de connexion à Gitea (%s): %s", url, err)
+            return {}
 
 
 class GiteaUserSensor(SensorEntity):
