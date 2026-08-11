@@ -23,7 +23,7 @@ class GiteaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_PROTOCOL, default="https"): str,
+                vol.Required(CONF_PROTOCOL, default="http"): str,
                 vol.Required(CONF_HOST): str,
                 vol.Required(CONF_PORT, default=3000): int,
                 vol.Required(CONF_TOKEN): str,

@@ -23,7 +23,6 @@ _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_NAME = "gitea"
 CONF_REPOS = "repositories"
-# Will update every 15 min the user repos list
 SCAN_INTERVAL_DISCOVERY = timedelta(minutes=15)
 
 ATTR_REPO_NAME = "Repository"
@@ -47,23 +46,7 @@ ATTR_ALL_ISSUES = "All Issues"
 ATTR_AVATAR_URL = "Avatar Url"
 ATTR_LANGUAGE = "Language"
 
-
 URL_ISSUE = "/issues?state=all"
-
-
-REPO_SCHEMA = vol.Schema(
-    {vol.Required(CONF_PATH): cv.string, vol.Optional(CONF_NAME): cv.string}
-)
-
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
-    {
-        vol.Required(CONF_TOKEN): cv.string,
-        vol.Required(CONF_PORT): cv.string,
-        vol.Required(CONF_HOST): cv.string,
-        vol.Required(CONF_PROTOCOL): cv.string,
-        vol.Optional(CONF_REPOS): vol.All(cv.ensure_list, [REPO_SCHEMA]),
-    }
-)
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
@@ -73,85 +56,73 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     proto = config.get(CONF_PROTOCOL)
     host = config.get(CONF_HOST)
     port = config.get(CONF_PORT)
-    explicit_repos = config.get(CONF_REPOS)
 
     known_repos = set()
     system_sensors_added = False
 
-    def discover_repos(now=None):
-        """system diagnostic sensors."""
+    def fetch_repos_data():
+        """Exécuté dans un thread : effectue uniquement la requête HTTP réseau."""
+        url = f"{proto}://{host}:{port}/api/v1/user/repos"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        }
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except Exception as err:
+            _LOGGER.error("Error fetching Gitea repos via API: %s", err)
+            return []
+
+    async def discover_repos(now=None):
+        """Exécuté sur l'event loop principal de Home Assistant."""
         nonlocal system_sensors_added
         entities = []
 
-        # Instanciation unique des capteurs de diagnostic lors du premier passage
-        _LOGGER.info("Creating diagnostic user and version entites...")
+        # 1. Capteurs de diagnostic au premier passage
         if not system_sensors_added:
+            _LOGGER.info("Creating diagnostic user and version entities...")
             system_sensors = [
                 GiteaUserSensor(token, proto, host, port),
-                GiteaVersionSensor(token, proto, host, port)
+                GiteaVersionSensor(token, proto, host, port),
             ]
             async_add_entities(system_sensors, True)
             system_sensors_added = True
 
-        """Add new repos"""
-        _LOGGER.info("Creating one entity by repo...")
-        try:
-            # If user explicitly lists repos in configuration.yaml
-            if explicit_repos:
-                for repo in explicit_repos:
-                    repo_path = repo[CONF_PATH]
-                    if repo_path not in known_repos:
-                        known_repos.add(repo_path)
-                        entities.append(
-                            GiteaSensor(token, proto, host, port, repo_path)
-                        )
+        # 2. Récupération distante des projets
+        _LOGGER.info("Discovering Gitea repositories...")
+        repos_data = await hass.async_add_executor_job(fetch_repos_data)
 
-            # No list written : dynamic list from Gitea API
-            else:
-                url = f"{proto}://{host}:{port}/api/v1/user/repos"
-                headers = {
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {token}",
-                }
-                response = requests.get(url, headers=headers, timeout=10)
-                response.raise_for_status()
+        for repo_info in repos_data:
+            repo_path = repo_info.get("full_name")
+            if repo_path and repo_path not in known_repos:
+                known_repos.add(repo_path)
+                entities.append(
+                    GiteaSensor(token, proto, host, port, repo_path)
+                )
 
-                repos_data = response.json()
-                for repo_info in repos_data:
-                    repo_path = repo_info.get("full_name")
-                    if repo_path and repo_path not in known_repos:
-                        known_repos.add(repo_path)
-                        entities.append(
-                            GiteaSensor(token, proto, host, port, repo_path)
-                        )
-
-            if entities:
-                async_add_entities(entities, True)
-
-        except Exception as err:
-            _LOGGER.error("Error when configuring Gitea integration: %s", err)
-
+        if entities:
+            async_add_entities(entities, True)
 
     _LOGGER.info("Creating manual service...")
-    # Define service to refresh repos list on demand on HA (version asynchrone)
-    def handle_reload_service(call=None):
-        _LOGGER.info("Manually refresh Gitea repos")
-        discover_repos()
+    hass.services.async_register(
+        "gitea", "reload_repos", lambda call: hass.async_create_task(discover_repos())
+    )
 
-    # Enregistrement asynchrone du service
-    hass.services.async_register("gitea", "reload_repos", handle_reload_service)
+    _LOGGER.info("First discovery of repos...")
+    await discover_repos()
 
-    _LOGGER.info("First discover of repos...")
-    # Première exécution de la découverte dans l'executor pour ne pas bloquer l'Event Loop
-    await hass.async_add_executor_job(discover_repos)
-
-    # Programation de la découverte dynamique toutes les 15 minutes
-    if not explicit_repos:
-        track_time_interval(hass, discover_repos, SCAN_INTERVAL_DISCOVERY)
+    # Planification dynamique de la recherche
+    track_time_interval(
+        hass,
+        lambda now: hass.async_create_task(discover_repos(now)),
+        SCAN_INTERVAL_DISCOVERY,
+    )
 
 
 class GiteaSensor(Entity):
-    """Representation of a Sensor."""
+    """Representation of a Repository Sensor."""
 
     def __init__(
             self,
@@ -160,24 +131,6 @@ class GiteaSensor(Entity):
             host=None,
             port=None,
             repo=None,
-            id=None,
-            description=None,
-            open_issues_count=None,
-            default_branch=None,
-            size=None,
-            owner_name=None,
-            private=None,
-            stars=None,
-            fork=None,
-            mirror=None,
-            url=None,
-            updated_at=None,
-            issue_title=None,
-            issue_link=None,
-            issue_state=None,
-            all_issues=None,
-            avatar_url=None,
-            language=None,
     ):
         self._state = None
         self.token = token
@@ -185,54 +138,68 @@ class GiteaSensor(Entity):
         self.api_url = host
         self.api_port = port
         self.repo = repo
-        self.id_repo = id
-        self.description = description
-        self.open_issues_count = open_issues_count
-        self.default_branch = default_branch
-        self.size = size
-        self.owner_name = owner_name
-        self.private = private
-        self.mirror = mirror
-        self.fork = fork
-        self.stars = stars
-        self.url = url
+        self.id_repo = None
+        self.description = None
+        self.open_issues_count = None
+        self.default_branch = None
+        self.size = None
+        self.owner_name = None
+        self.private = None
+        self.mirror = None
+        self.fork = None
+        self.stars = None
+        self.url = None
         self.watcher = None
-        self.updated_at = updated_at
-        self.issue_title = issue_title
-        self.issue_link = issue_link
-        self.issue_state = issue_state
-        self.all_issues = all_issues
-        self.avatar_url = avatar_url
-        self.language = language
+        self.updated_at = None
+        self.issue_title = None
+        self.issue_link = None
+        self.issue_state = None
+        self.all_issues = None
+        self.avatar_url = None
+        self.language = None
 
     @property
     def name(self):
-        """Return the name of the sensor."""
         repo_parts = self.repo.split("/")
         repo_name = repo_parts[1] if len(repo_parts) > 1 else self.repo
         return f"{DEFAULT_NAME}_repo_{repo_name}"
 
     @property
     def state(self):
-        """Return the state of the sensor."""
         return self._state
 
     @property
     def icon(self):
-        """Return the icon to use in the frontend."""
-        if self.mirror is True:
+        if self.mirror:
             return "mdi:format-horizontal-align-center"
         return "mdi:tea"
 
     @property
     def entity_picture(self) -> str | None:
-        """Retourne l'URL de l'image de l'entité."""
         return self.avatar_url
 
     @property
+    def unique_id(self):
+        if self.id_repo:
+            return f"gitea_repo_{self.id_repo}"
+        return f"gitea_repo_{self.repo.replace('/', '_')}"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        repo_parts = self.repo.split("/")
+        repo_name = repo_parts[1] if len(repo_parts) > 1 else self.repo
+
+        return DeviceInfo(
+            identifiers={("gitea", f"repo_{self.id_repo or self.repo}")},
+            name=f"{repo_name}",
+            manufacturer="Gitea",
+            model="Git Repository",
+            configuration_url=self.url,
+        )
+
+    @property
     def extra_state_attributes(self):
-        """Return the state attributes."""
-        attrs = {
+        return {
             ATTR_REPO_ID: self.id_repo,
             ATTR_REPO_NAME: self.repo,
             ATTR_OWNER: self.owner_name,
@@ -252,12 +219,10 @@ class GiteaSensor(Entity):
             ATTR_LAST_ISSUE_TITLE: self.issue_title,
             ATTR_ALL_ISSUES: self.all_issues,
             ATTR_AVATAR_URL: self.avatar_url,
-            ATTR_LANGUAGE: self.language
+            ATTR_LANGUAGE: self.language,
         }
-        return attrs
 
     def update(self):
-        """Update all sensor attributes."""
         infos = self.api_call(self.generate_url())
         self.id_repo = infos["id"]
         self.description = infos["description"]
@@ -284,58 +249,27 @@ class GiteaSensor(Entity):
             self.issue_title = issues[0]["title"]
 
             for iss in issues:
-                card_items = {}
-                card_items["id"] = iss["id"]
-                card_items["state"] = iss["state"]
-                card_items["title"] = iss["title"]
-                card_items["url"] = iss["html_url"]
+                card_items = {
+                    "id": iss["id"],
+                    "state": iss["state"],
+                    "title": iss["title"],
+                    "url": iss["html_url"],
+                }
                 issues_tab.append(card_items)
 
             self.all_issues = json.dumps(issues_tab)
 
     def generate_url(self, path=""):
-        """Return api url."""
-        return "{0}://{1}:{2}/api/v1/repos/{3}/{4}{5}".format(
-            self.proto,
-            self.api_url,
-            self.api_port,
-            self.repo.split("/")[0],
-            self.repo.split("/")[1],
-            path,
-        )
+        return f"{self.proto}://{self.api_url}:{self.api_port}/api/v1/repos/{self.repo.split('/')[0]}/{self.repo.split('/')[1]}{path}"
 
     def get_header(self):
-        """Return headers for api request."""
-        headers = {
+        return {
             "Content-Type": "application/json",
-            "Authorization": "Bearer {0}".format(self.token),
+            "Authorization": f"Bearer {self.token}",
         }
-        return headers
 
     def api_call(self, url):
-        """Return result of api request."""
-        return requests.request(method="GET", url=url, headers=self.get_header()).json()
-
-    @property
-    def unique_id(self):
-        """Retourne un identifiant unique pour l'entité."""
-        if self.id_repo:
-            return f"gitea_repo_{self.id_repo}"
-        return f"gitea_repo_{self.repo.replace('/', '_')}"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Retourne les informations de l'appareil associé au projet."""
-        repo_parts = self.repo.split("/")
-        repo_name = repo_parts[1] if len(repo_parts) > 1 else self.repo
-
-        return DeviceInfo(
-            identifiers={("gitea", f"repo_{self.id_repo or self.repo}")},
-            name=f"{repo_name}",
-            manufacturer="Gitea",
-            model="Git Repository",
-            configuration_url=self.url,
-        )
+        return requests.get(url, headers=self.get_header(), timeout=10).json()
 
 
 class GiteaUserSensor(SensorEntity):
@@ -354,48 +288,19 @@ class GiteaUserSensor(SensorEntity):
 
     @property
     def name(self):
-        """Return sensor name."""
         return f"{DEFAULT_NAME}_user"
 
     @property
     def native_value(self):
-        """Return current user name / login."""
         return self._state
 
     @property
     def extra_state_attributes(self):
-        """Return user metadata (email, avatar_url, admin status, etc.)."""
         return self._attributes
 
     @property
     def entity_picture(self) -> str | None:
-        """Retourne l'URL de l'image de l'entité."""
         return self._attributes.get("avatar_url")
-
-    def update(self):
-        """Fetch current authenticated user profile."""
-        url = f"{self.proto}://{self.host}:{self.port}/api/v1/user"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.token}",
-        }
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            user_info = response.json()
-
-            self._state = user_info.get("full_name") or user_info.get("login")
-
-            self._attributes = {
-                "username": user_info.get("login"),
-                "email": user_info.get("email"),
-                "avatar_url": user_info.get("avatar_url"),
-                "id": user_info.get("id"),
-                "is_admin": user_info.get("is_admin"),
-                "created_at": user_info.get("created"),
-            }
-        except Exception as err:
-            _LOGGER.error("Error fetching Gitea user info: %s", err)
 
     @property
     def unique_id(self):
@@ -409,6 +314,29 @@ class GiteaUserSensor(SensorEntity):
             manufacturer="Gitea",
             configuration_url=f"{self.proto}://{self.host}:{self.port}",
         )
+
+    def update(self):
+        url = f"{self.proto}://{self.host}:{self.port}/api/v1/user"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.token}",
+        }
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            user_info = response.json()
+
+            self._state = user_info.get("full_name") or user_info.get("login")
+            self._attributes = {
+                "username": user_info.get("login"),
+                "email": user_info.get("email"),
+                "avatar_url": user_info.get("avatar_url"),
+                "id": user_info.get("id"),
+                "is_admin": user_info.get("is_admin"),
+                "created_at": user_info.get("created"),
+            }
+        except Exception as err:
+            _LOGGER.error("Error fetching Gitea user info: %s", err)
 
 
 class GiteaVersionSensor(SensorEntity):
@@ -426,28 +354,11 @@ class GiteaVersionSensor(SensorEntity):
 
     @property
     def name(self):
-        """Return sensor name."""
         return f"{DEFAULT_NAME}_version"
 
     @property
     def native_value(self):
-        """Return Gitea instance version."""
         return self._state
-
-    def update(self):
-        """Fetch server version."""
-        url = f"{self.proto}://{self.host}:{self.port}/api/v1/version"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.token}",
-        }
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            self._state = data.get("version")
-        except Exception as err:
-            _LOGGER.error("Error fetching Gitea version: %s", err)
 
     @property
     def unique_id(self):
@@ -461,3 +372,17 @@ class GiteaVersionSensor(SensorEntity):
             manufacturer="Gitea",
             configuration_url=f"{self.proto}://{self.host}:{self.port}",
         )
+
+    def update(self):
+        url = f"{self.proto}://{self.host}:{self.port}/api/v1/version"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.token}",
+        }
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            self._state = data.get("version")
+        except Exception as err:
+            _LOGGER.error("Error fetching Gitea version: %s", err)
