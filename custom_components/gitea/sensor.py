@@ -283,6 +283,7 @@ class GiteaUserSensor(SensorEntity):
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:account-cog"
+    _attr_friendly_name = "User"
 
     def __init__(self, token, proto, host, port):
         self.token = token
@@ -316,7 +317,7 @@ class GiteaUserSensor(SensorEntity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={("gitea", f"instance_{self.host}_{self.port}")},
-            name=f"Gitea ({self.host})",
+            name=f"Gitea Server ({self.host})",
             manufacturer="Gitea",
             configuration_url=f"{self.proto}://{self.host}:{self.port}",
         )
@@ -350,6 +351,7 @@ class GiteaVersionSensor(SensorEntity):
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:git"
+    _attr_friendly_name = "Gitea Version"
 
     def __init__(self, token, proto, host, port):
         self.token = token
@@ -374,7 +376,7 @@ class GiteaVersionSensor(SensorEntity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={("gitea", f"instance_{self.host}_{self.port}")},
-            name=f"Gitea ({self.host})",
+            name=f"Gitea Server ({self.host})",
             manufacturer="Gitea",
             configuration_url=f"{self.proto}://{self.host}:{self.port}",
         )
