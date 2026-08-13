@@ -1,6 +1,7 @@
 """Platform for sensor integration."""
 from datetime import timedelta
 import logging
+import time
 import json
 import requests
 import voluptuous as vol
@@ -48,6 +49,9 @@ ATTR_LANGUAGE = "Language"
 
 URL_ISSUE = "/issues?state=all"
 
+# Réutilisation de la session HTTP pour éviter la saturation des sockets
+HTTP_SESSION = requests.Session()
+
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Configuration des capteurs via ConfigEntry UI."""
@@ -68,7 +72,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             "Authorization": f"Bearer {token}",
         }
         try:
-            response = requests.get(url, headers=headers, timeout=10)
+            response = HTTP_SESSION.get(url, headers=headers, timeout=10)
             response.raise_for_status()
             return response.json()
         except Exception as err:
@@ -223,7 +227,11 @@ class GiteaSensor(Entity):
         }
 
     def update(self):
+        time.sleep(0.2)  # Temporisation pour espacer les requêtes
         infos = self.api_call(self.generate_url())
+        if not infos or "id" not in infos:
+            return
+
         self.id_repo = infos["id"]
         self.description = infos["description"]
         self.open_issues_count = infos["open_issues_count"]
@@ -241,23 +249,27 @@ class GiteaSensor(Entity):
         self.avatar_url = infos["avatar_url"]
         self.language = infos.get("language")
 
-        if infos["open_issues_count"] != 0:
-            issues_tab = []
+        if infos.get("open_issues_count", 0) != 0:
+            time.sleep(0.1)
             issues = self.api_call(self.generate_url(URL_ISSUE))
-            self.issue_link = issues[0]["html_url"]
-            self.issue_state = issues[0]["state"]
-            self.issue_title = issues[0]["title"]
 
-            for iss in issues:
-                card_items = {
-                    "id": iss["id"],
-                    "state": iss["state"],
-                    "title": iss["title"],
-                    "url": iss["html_url"],
-                }
-                issues_tab.append(card_items)
+            # Vérification de sécurité avant d'accéder aux éléments de la liste
+            if isinstance(issues, list) and len(issues) > 0:
+                issues_tab = []
+                self.issue_link = issues[0]["html_url"]
+                self.issue_state = issues[0]["state"]
+                self.issue_title = issues[0]["title"]
 
-            self.all_issues = json.dumps(issues_tab)
+                for iss in issues:
+                    card_items = {
+                        "id": iss["id"],
+                        "state": iss["state"],
+                        "title": iss["title"],
+                        "url": iss["html_url"],
+                    }
+                    issues_tab.append(card_items)
+
+                self.all_issues = json.dumps(issues_tab)
 
     def generate_url(self, path=""):
         return f"{self.proto}://{self.api_url}:{self.api_port}/api/v1/repos/{self.repo.split('/')[0]}/{self.repo.split('/')[1]}{path}"
@@ -269,13 +281,17 @@ class GiteaSensor(Entity):
         }
 
     def api_call(self, url):
-        try:
-            response = requests.get(url, headers=self.get_header(), timeout=10)
-            response.raise_for_status()
-            return response.json()
-        except Exception as err:
-            _LOGGER.error("Erreur de connexion à Gitea (%s): %s", url, err)
-            return {}
+        headers = self.get_header()
+        for attempt in range(3):
+            try:
+                response = HTTP_SESSION.get(url, headers=headers, timeout=10)
+                response.raise_for_status()
+                return response.json()
+            except Exception as err:
+                if attempt == 2:
+                    _LOGGER.error("Erreur de connexion à Gitea (%s): %s", url, err)
+                    return {}
+                time.sleep(1)
 
 
 class GiteaUserSensor(SensorEntity):
@@ -294,7 +310,7 @@ class GiteaUserSensor(SensorEntity):
 
     @property
     def name(self):
-        return f"Gitea User"
+        return "Gitea User"
 
     @property
     def native_value(self):
@@ -328,7 +344,7 @@ class GiteaUserSensor(SensorEntity):
             "Authorization": f"Bearer {self.token}",
         }
         try:
-            response = requests.get(url, headers=headers, timeout=10)
+            response = HTTP_SESSION.get(url, headers=headers, timeout=10)
             response.raise_for_status()
             user_info = response.json()
 
@@ -360,7 +376,7 @@ class GiteaVersionSensor(SensorEntity):
 
     @property
     def name(self):
-        return f"Gitea Version"
+        return "Gitea Version"
 
     @property
     def native_value(self):
@@ -386,7 +402,7 @@ class GiteaVersionSensor(SensorEntity):
             "Authorization": f"Bearer {self.token}",
         }
         try:
-            response = requests.get(url, headers=headers, timeout=10)
+            response = HTTP_SESSION.get(url, headers=headers, timeout=10)
             response.raise_for_status()
             data = response.json()
             self._state = data.get("version")
