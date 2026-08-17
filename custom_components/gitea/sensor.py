@@ -46,6 +46,7 @@ ATTR_LAST_ISSUE_TITLE = "Last Issue Title"
 ATTR_ALL_ISSUES = "All Issues"
 ATTR_AVATAR_URL = "Avatar Url"
 ATTR_LANGUAGE = "Language"
+ATTR_LAST_TAG = "Last Tag"
 
 URL_ISSUE = "/issues?state=all"
 
@@ -161,6 +162,7 @@ class GiteaSensor(Entity):
         self.all_issues = None
         self.avatar_url = None
         self.language = None
+        self.last_tag = None
 
     @property
     def name(self):
@@ -224,6 +226,7 @@ class GiteaSensor(Entity):
             ATTR_ALL_ISSUES: self.all_issues,
             ATTR_AVATAR_URL: self.avatar_url,
             ATTR_LANGUAGE: self.language,
+            ATTR_LAST_TAG: self.last_tag,
         }
 
     def update(self):
@@ -249,6 +252,16 @@ class GiteaSensor(Entity):
         self.avatar_url = infos["avatar_url"]
         self.language = infos.get("language")
 
+        # Dernier TAG
+        if self.language is not None:
+            time.sleep(0.1)
+            tags = self.api_call(self.generate_url("/tags?limit=1"))
+            if isinstance(tags, list) and len(tags) > 0:
+                self.last_tag = tags[0].get("name")
+            else:
+                self.last_tag = None
+
+        # Dernier ticket
         if infos.get("open_issues_count", 0) != 0:
             time.sleep(0.1)
             issues = self.api_call(self.generate_url(URL_ISSUE))
